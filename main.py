@@ -1,4 +1,4 @@
-import os
+for
 import logging
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
@@ -22,7 +22,7 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 genai.configure(api_key=GEMINI_API_KEY)
 
-for for m in genai.list_models():
+for m in genai.list_models():
     if 'generateContent' in m.supported_generation_methods:
         model = genai.GenerativeModel(m.name)
         break
