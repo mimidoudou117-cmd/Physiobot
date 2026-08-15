@@ -1,3 +1,2 @@
-python-telegram-bot[job-queue]==20.7
+python-telegram-bot
 google-generativeai
-httpx==0.24.1
