@@ -22,8 +22,11 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 genai.configure(api_key=GEMINI_API_KEY)
 
-# استخدام موديل gemini-2.0-flash المباشر
-model = genai.GenerativeModel('gemini-2.0-flash')
+for for m in genai.list_models():
+    if 'generateContent' in m.supported_generation_methods:
+        model = genai.GenerativeModel(m.name)
+        break
+
 
 
 
