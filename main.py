@@ -2,8 +2,8 @@ import os
 import logging
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
-from supabase import create_client, Client
 import google.generativeai as genai
+from supabase import create_client, Client
 
 # إعداد التسجيل (Logging)
 logging.basicConfig(
@@ -12,115 +12,73 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# جلب متغيرات البيئة
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-SUPABASE_URL = os.environ.get("SUPABASE_URL")
-SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+# جلب المتغيرات البيئية
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
 # تهيئة Supabase و Gemini
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel('models/gemini-1.5-flash')
 
+# استخدام موديل gemini-1.5-flash المباشر
+model = genai.GenerativeModel('gemini-1.5-flash')
 
-
-
-
-def get_patient_data(patient_id: str) -> dict:
-    """جلب بيانات المريض من Supabase"""
-    try:
-        response = supabase.table("patients").select("data").eq("patient_id", patient_id).execute()
-        if response.data:
-            return response.data[0]["data"]
-    except Exception as e:
-        logger.error(f"خطأ في جلب البيانات: {e}")
-    
-    # القالب الافتراضي إذا كان المريض جديداً
-    return {
-        "soap_notes": [],
-        "pain_scores": [],
-        "rehab_program": []
-    }
-
-def save_patient_data(patient_id: str, data: dict):
-    """حفظ بيانات المريض في Supabase"""
-    try:
-        supabase.table("patients").upsert({
-            "patient_id": patient_id,
-            "data": data
-        }).execute()
-    except Exception as e:
-        logger.error(f"خطأ في حفظ البيانات: {e}")
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """أمر البداية"""
-    welcome_text = (
-        "مرحباً بك في نظام PhysioBot للتقييم والمتابعة العلاجية! 🩺\n\n"
-        "يمكنك إرسال الملاحظات السريرية، مستويات الألم، أو خطط العلاج لتوثيقها وحفظها آلياً."
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """أمر البداية /start"""
+    user_first_name = update.effective_user.first_name
+    await update.message.reply_text(
+        f"أهلاً بك يا {user_first_name}! أنا بوت العيادة، كيف يمكنني مساعدتك اليوم؟"
     )
-    await update.message.reply_text(welcome_text)
 
-async def view_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """عرض ملف المريض الحالي"""
-    patient_id = str(update.effective_user.id)
-    patient_data = get_patient_data(patient_id)
-    
-    # معالجة مستوى الألم الأخير بأسلوب آمن بدون أخطاء بناء جملة
-    pain_list = patient_data.get("pain_scores", [])
-    last_pain = pain_list[-1].get("score", "غير مسجل") if pain_list else "غير مسجل"
-    
-    notes_count = len(patient_data.get("soap_notes", []))
-    rehab_count = len(patient_data.get("rehab_program", []))
-
-    profile_text = (
-        f"📊 **سجل المريض:**\n"
-        f"• عدد الملاحظات السريرية (SOAP): {notes_count}\n"
-        f"• 📈 آخر مستوى ألم مسجل: {last_pain}\n"
-        f"• 🏋️ تمارين التأهيل المسجلة: {rehab_count}"
-    )
-    await update.message.reply_text(profile_text, parse_mode="Markdown")
-
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة الرسائل الواردة باستخدام Gemini ومزامنتها مع Supabase"""
-    patient_id = str(update.effective_user.id)
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """معالجة الرسائل القادمة واستدعاء Gemini"""
     user_text = update.message.text
-    patient_data = get_patient_data(patient_id)
+    patient_id = update.effective_user.id
 
-    # توجيه الذكاء الاصطناعي مع تحليلات العلاج الطبيعي
-    prompt = f"""
-    أنت مساعد ذكي متخصص في العلاج الطبيعي والإعادة التأهيلية.
-    بناءً على رسالة المريض أو الأخصائي التالية: "{user_text}"
-    قم بتقديم استجابة مهنية ودقيقة تشمل النصائح أو التقييم المناسب.
-    """
-    
     try:
-        response = model.generate_content(prompt)
-        reply_text = response.text
+        # إرسال النص إلى Gemini
+        response = model.generate_content(user_text)
+        bot_reply = response.text if response.text else "عذراً، لم أستطع توليد إجابة مناسبة."
 
-        # التوثيق والتحليلات الآلية
-        if "ألم" in user_text or "pain" in user_text.lower():
-            patient_data.setdefault("pain_scores", []).append({"score": user_text, "text": user_text})
-        else:
-            patient_data.setdefault("soap_notes", []).append({"note": user_text})
+        # حفظ المراسلة في قاعدة بيانات Supabase (اختياري حسب جدولك)
+        try:
+            supabase.table("patients").upsert({
+                "patient_id": patient_id,
+                "data": {"last_message": user_text, "last_reply": bot_reply}
+            }).execute()
+        except Exception as db_err:
+            logger.error(f"خطأ في قاعدة البيانات Supabase: {db_err}")
 
-        # حفظ التحديثات في السحابة
-        save_patient_data(patient_id, patient_data)
-        await update.message.reply_text(reply_text)
+        # إرسال الرد للمستخدم في تليجرام
+        await update.message.reply_text(bot_reply)
 
     except Exception as e:
         logger.error(f"خطأ أثناء معالجة الرسالة: {e}")
-        await update.message.reply_text("حدث خطأ أثناء معالجة طلبك، يرجى المحاولة لاحقاً.")
+        # خطة بديلة تلقائية في حال تعثر الموديل الرئيسي
+        try:
+            fallback_model = genai.GenerativeModel('gemini-pro')
+            fallback_response = fallback_model.generate_content(user_text)
+            await update.message.reply_text(fallback_response.text)
+        except Exception as fallback_err:
+            logger.error(f"خطأ في الموديل البديل: {fallback_err}")
+            await update.message.reply_text("حدث خطأ مؤقت أثناء معالجة طلبك، يرجى المحاولة لاحقاً.")
 
-def main():
+def main() -> None:
     """تشغيل البوت"""
-    application = Application.builder().token(TELEGRAM_TOKEN).build()
+    if not TELEGRAM_BOT_TOKEN:
+        raise ValueError("خطأ: لم يتم العثور على TELEGRAM_BOT_TOKEN في المتغيرات البيئية!")
 
+    application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+
+    # إضافة الموجهات (Handlers)
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("profile", view_profile))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    application.run_polling()
+    # بدء الاستماع للرسائل (Polling)
+    logger.info("جاري تشغيل البوت...")
+    application.run_polling(drop_pending_updates=True)
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
