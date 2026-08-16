@@ -1,9 +1,11 @@
 import os
 import logging
 import asyncio
-import threading
-from http.server import BaseHTTPRequestHandler, HTTPServer
 import requests
+import nest_asyncio
+
+# تفعيل nest-asyncio لتجنب أخطاء Event Loop على Render نهائياً
+nest_asyncio.apply()
 
 from telegram import Update
 from telegram.ext import (
@@ -16,6 +18,8 @@ from telegram.ext import (
 
 import google.generativeai as genai
 from supabase import create_client, Client
+from http.server import BaseHTTPRequestHandler, HTTPServer
+import threading
 
 
 # ==========================
@@ -81,7 +85,7 @@ SYSTEM_PROMPT = """
 
 
 # ==========================
-# Database
+# Database Functions
 # ==========================
 def save_message(patient_id, role, content):
     try:
@@ -111,7 +115,7 @@ def get_history(patient_id):
 
 
 # ==========================
-# Commands
+# Telegram Commands
 # ==========================
 async def start(
     update: Update,
@@ -208,28 +212,23 @@ def run_dummy_server():
 # Main
 # ==========================
 def main():
-    # 1. تشغيل خادم الويب الوهمي في Thread جانبي لإرضاء Render Web Service
+    # 1. تشغيل خادم الويب الوهمي في Thread مستقل لإرضاء منصة Render
     server_thread = threading.Thread(target=run_dummy_server, daemon=True)
     server_thread.start()
 
-    # 2. إنشاء وتعيين Event Loop يدوياً لتجنب مشاكل الإصدارات الحديثة
-    try:
-        loop = asyncio.get_event_loop()
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-
+    # 2. حذف الـ Webhook القديم لمنع تضارب التحديثات (خطأ 409)
     try:
         requests.get(
             f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/deleteWebhook?drop_pending_updates=true",
             timeout=10
         )
-        logger.info("Webhook deleted")
+        logger.info("Webhook deleted successfully")
     except Exception as e:
         logger.warning(
             f"Webhook delete failed: {e}"
         )
 
+    # 3. إعداد تطبيق تيليجرام
     app = (
         ApplicationBuilder()
         .token(TELEGRAM_BOT_TOKEN)
@@ -254,8 +253,9 @@ def main():
         error_handler
     )
 
-    logger.info("Bot started successfully")
+    logger.info("Bot started successfully and polling...")
 
+    # 4. تشغيل البوت بنظام التشغيل المستمر
     app.run_polling(
         drop_pending_updates=True,
         allowed_updates=Update.ALL_TYPES
