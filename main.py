@@ -1,6 +1,8 @@
 import os
 import logging
 import asyncio
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 import requests
 
 from telegram import Update
@@ -82,20 +84,17 @@ SYSTEM_PROMPT = """
 # Database
 # ==========================
 def save_message(patient_id, role, content):
-
     try:
         supabase.table("messages").insert({
             "patient_id": str(patient_id),
             "role": role,
             "content": content
         }).execute()
-
     except Exception as e:
         logger.error(f"DB Save Error: {e}")
 
 
 def get_history(patient_id):
-
     try:
         result = (
             supabase.table("messages")
@@ -105,9 +104,7 @@ def get_history(patient_id):
             .limit(15)
             .execute()
         )
-
         return result.data or []
-
     except Exception as e:
         logger.error(f"DB Read Error: {e}")
         return []
@@ -120,7 +117,6 @@ async def start(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
-
     await update.message.reply_text(
         "مرحباً 👋\nأنا المساعد الذكي للعيادة.\nكيف يمكنني مساعدتك؟"
     )
@@ -133,21 +129,16 @@ async def handle_message(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
-
     user_text = update.message.text
     patient_id = update.effective_user.id
 
     try:
-
         history = get_history(patient_id)
-
         prompt = SYSTEM_PROMPT + "\n\n"
 
         for msg in history:
-
             role = msg["role"]
             content = msg["content"]
-
             prompt += f"{role}: {content}\n"
 
         prompt += f"\nالمريض: {user_text}"
@@ -178,9 +169,7 @@ async def handle_message(
         await update.message.reply_text(answer)
 
     except Exception as e:
-
         logger.exception(e)
-
         await update.message.reply_text(
             "حدث خطأ أثناء معالجة الرسالة."
         )
@@ -199,9 +188,36 @@ async def error_handler(
 
 
 # ==========================
+# Dummy Web Server for Render
+# ==========================
+class DummyHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'text/plain')
+        self.end_headers()
+        self.wfile.write(b"Bot is active and running!")
+
+def run_dummy_server():
+    port = int(os.environ.get("PORT", 10000))
+    server = HTTPServer(('0.0.0.0', port), DummyHandler)
+    logger.info(f"Dummy web server started on port {port}")
+    server.serve_forever()
+
+
+# ==========================
 # Main
 # ==========================
 def main():
+    # 1. تشغيل خادم الويب الوهمي في Thread جانبي لإرضاء Render Web Service
+    server_thread = threading.Thread(target=run_dummy_server, daemon=True)
+    server_thread.start()
+
+    # 2. إنشاء وتعيين Event Loop يدوياً لتجنب مشاكل الإصدارات الحديثة
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
 
     try:
         requests.get(
@@ -209,7 +225,6 @@ def main():
             timeout=10
         )
         logger.info("Webhook deleted")
-
     except Exception as e:
         logger.warning(
             f"Webhook delete failed: {e}"
@@ -239,7 +254,7 @@ def main():
         error_handler
     )
 
-    logger.info("Bot started")
+    logger.info("Bot started successfully")
 
     app.run_polling(
         drop_pending_updates=True,
