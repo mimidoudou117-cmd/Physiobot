@@ -21,8 +21,12 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 genai.configure(api_key=GEMINI_API_KEY)
 
-# استخدام موديل gemini-2.0-flash
-model = genai.GenerativeModel('gemini-2.0-flash')
+# البحث التلقائي عن أول موديل يدعم توليد النصوص
+model = None
+for m in genai.list_models():
+    if 'generateContent' in m.supported_generation_methods:
+        model = genai.GenerativeModel(m.name)
+        break
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_first_name = update.effective_user.first_name
@@ -33,6 +37,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_text = update.message.text
     patient_id = update.effective_user.id
+
+    if not model:
+        await update.message.reply_text("عذراً، لا يوجد نموذج ذكاء اصطناعي متاح حالياً.")
+        return
 
     try:
         response = model.generate_content(user_text)
